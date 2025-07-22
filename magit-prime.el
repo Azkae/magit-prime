@@ -65,8 +65,8 @@
              (not (file-remote-p default-directory)))
     (let ((elapsed
            (benchmark-elapse
-             (magit--prime-refresh-cache magit-prime--commands-phase-one)
-             (magit--prime-refresh-cache (magit-prime--commands-phase-two)))))
+             (magit-prime--refresh-cache magit-prime--commands-phase-one)
+             (magit-prime--refresh-cache (magit-prime--commands-phase-two)))))
       (when magit-refresh-verbose
         (message "Refresh cached primed in %.3fs" elapsed)))))
 
@@ -87,7 +87,7 @@
                 :noquery t
                 :connection-type 'pipe
                 :command (cons magit-git-executable
-                               (magit-process-git-arguments commands))
+                               (magit-process-git-arguments command))
                 :sentinel
                 (lambda (proc _event)
                   (when (eq (process-status proc) 'exit)
