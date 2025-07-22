@@ -1,6 +1,7 @@
 # magit-prime
 
 A Magit extension that primes caches in parallel before refresh operations, reducing Magit buffer refresh times.
+Currently doesn't work on tramp.
 
 ## Usage
 
