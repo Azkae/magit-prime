@@ -71,6 +71,11 @@
         (message "Refresh cached primed in %.3fs" elapsed)))))
 
 (defun magit-prime--refresh-cache (commands)
+  (if (file-remote-p default-directory)
+      (magit-prime--refresh-cache-remote commands)
+    (magit-prime--refresh-cache-local commands)))
+
+(defun magit-prime--refresh-cache-local (commands)
   "Prime the refresh cache with the provided COMMANDS."
   (let* ((repo-path (magit-toplevel))
          (running 0)
@@ -115,6 +120,27 @@
         (accept-process-output)))
 
     (mapc #'kill-buffer buffers)))
+
+(defconst magit-prime--execute-commands-script "")
+
+(defun magit-prime--refresh-cache-remote (commands)
+  "Prime the refresh cache with the provided COMMANDS using tramp."
+  )
+
+(defun magit-prime--format-commands-for-bash (commands)
+  "Convert COMMANDS list to bash script input format.
+Each command becomes 'ID:git ARGS' where ID is the 1-based index."
+  (let ((id 1))
+    (mapconcat
+     (lambda (command)
+       (let* ((cachep (and (eq (car command) t) (pop command)))
+              (clean-command (mapcar #'substring-no-properties command))
+              (git-command (mapconcat #'shell-quote-argument clean-command " "))
+              (line (format "%d:git %s" id git-command)))
+         (cl-incf id)
+         line))
+     commands
+     "\n")))
 
 (provide 'magit-prime)
 
