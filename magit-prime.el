@@ -20,13 +20,15 @@
 
 (defvar magit-prime--commands-phase-one
   '(("symbolic-ref" "--short" "HEAD")
-    ("describe" "--long" "--tags")
+    (t "describe" "--long" "--tags")
     ("describe" "--contains" "HEAD")
     ("rev-parse" "--git-dir")
     ("rev-parse" "--is-bare-repository")
     ("rev-parse" "--short" "HEAD")
     ("rev-parse" "--short" "HEAD~")
-    ("describe" "--contains" "HEAD")
+    ("rev-parse" "--verify" "--abbrev-ref" "master@{upstream}")
+    ("rev-parse" "--verify" "--abbrev-ref" "main@{upstream}")
+    (t "describe" "--contains" "HEAD")
     (t "rev-parse" "--verify" "HEAD")
     (t "rev-parse" "--verify" "refs/stash")
     (t "rev-parse" "--verify" "HEAD~10")))
@@ -47,8 +49,8 @@
        ("log" "--no-walk" "--format=%s" ,(concat push-main "^{commit}") "--")
        ("log" "--no-walk" "--format=%s" ,(concat push-branch "^{commit}") "--")
        ("log" "--no-walk" "--format=%h %s" "HEAD^{commit}" "--")
-       ("symbolic-ref" ,(format "refs/remotes/%s/HEAD" primary-remote))
-       ("symbolic-ref" ,(format "refs/remotes/%s/HEAD" push-remote))
+       (t "symbolic-ref" ,(format "refs/remotes/%s/HEAD" primary-remote))
+       (t "symbolic-ref" ,(format "refs/remotes/%s/HEAD" push-remote))
        (t "rev-parse" "--verify" ,(concat "refs/tags/" branch))
        (t "rev-parse" "--verify" ,(concat "refs/tags/" main))
        (t "rev-parse" "--verify" ,(concat "refs/tags/" push-branch))
@@ -61,8 +63,7 @@
   "Prime the refresh cache if possible."
   (when (and (or magit-refresh-status-buffer
                  (derived-mode-p 'magit-status-mode))
-             magit--refresh-cache
-             (not (file-remote-p default-directory)))
+             magit--refresh-cache)
     (let ((elapsed
            (benchmark-elapse
              (magit-prime--refresh-cache magit-prime--commands-phase-one)
@@ -71,6 +72,11 @@
         (message "Refresh cached primed in %.3fs" elapsed)))))
 
 (defun magit-prime--refresh-cache (commands)
+  (if (file-remote-p default-directory)
+      (magit-prime--refresh-cache-remote commands)
+    (magit-prime--refresh-cache-local commands)))
+
+(defun magit-prime--refresh-cache-local (commands)
   "Prime the refresh cache with the provided COMMANDS."
   (let* ((repo-path (magit-toplevel))
          (running 0)
@@ -115,6 +121,72 @@
         (accept-process-output)))
 
     (mapc #'kill-buffer buffers)))
+
+(defconst magit-prime--batch-commands-script "
+COMMANDS=\"$1\"
+REPO_DIR=\"$2\"
+
+run_command() {
+    local id=\"$1\"
+    local command=\"$2\"
+
+    local output
+    local exit_code
+
+    output=$(cd \"$REPO_DIR\" && eval \"$command\" 2>/dev/null)
+    exit_code=$?
+
+    output=$(echo \"$output\" | head -n1)
+
+    echo \"($id $exit_code \\\"$output\\\")\"
+}
+
+echo \\(
+
+echo \"$COMMANDS\" | {
+    while IFS=':' read -r id command; do
+        run_command \"$id\" \"$command\" &
+    done
+
+    wait
+}
+
+echo \\)
+")
+
+(defun magit-prime--refresh-cache-remote (commands)
+  "Prime the refresh cache with the provided COMMANDS using tramp."
+  (let ((vec (tramp-dissect-file-name default-directory))
+        (str-commands (magit-prime--format-commands-for-bash commands))
+        (repo-dir (file-remote-p default-directory 'localname))
+        (repo-path (magit-toplevel)))
+    (tramp-maybe-send-script vec magit-prime--batch-commands-script
+                             "magit_prime__batch_commands")
+    (let ((results
+           (tramp-send-command-and-read
+            vec (format "magit_prime__batch_commands '%s' '%s'" str-commands repo-dir))))
+      (dolist (item results)
+        (let* ((command (nth 0 item))
+               (cachep (and (eq (car command) t) (pop command)))
+               (status-code (nth 1 item))
+               (output (nth 2 item)))
+          (when (or cachep (zerop status-code))
+            (push (cons (cons repo-path command) (and (zerop status-code) output))
+                  (cdr magit--refresh-cache))))))))
+
+(defun magit-prime--format-commands-for-bash (commands)
+  "Convert COMMANDS list to bash script input format.
+Each command becomes 'LISP-FORM:git ARGS' where LISP-FORM is the original command."
+  (mapconcat
+   (lambda (command)
+     (let* ((original-command command)
+            (cachep (and (eq (car command) t) (pop command)))
+            (clean-command (mapcar #'substring-no-properties command))
+            (git-command (mapconcat #'shell-quote-argument clean-command " "))
+            (line (format "%S:%s %s" original-command magit-remote-git-executable git-command)))
+       line))
+   commands
+   "\n"))
 
 (provide 'magit-prime)
 

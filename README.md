@@ -3,7 +3,7 @@
 A Magit extension that primes the magit cache in parallel before refresh, reducing refresh times.
 Speeds up magit-refresh by ~100ms on my system.
 
-Currently doesn't work on tramp.
+Tramp support is experimental.
 
 ## Usage
 
