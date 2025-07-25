@@ -61,8 +61,7 @@
   "Prime the refresh cache if possible."
   (when (and (or magit-refresh-status-buffer
                  (derived-mode-p 'magit-status-mode))
-             magit--refresh-cache
-             (not (file-remote-p default-directory)))
+             magit--refresh-cache)
     (let ((elapsed
            (benchmark-elapse
              (magit-prime--refresh-cache magit-prime--commands-phase-one)
@@ -123,13 +122,20 @@
 
 (defconst magit-prime--batch-commands-script "
 COMMANDS=\"$1\"
+REPO_DIR=\"$2\"
 
 run_command() {
     local id=\"$1\"
     local command=\"$2\"
 
-    local output=$(eval \"$command\" 2>/dev/null | head -n1)
-    local exit_code=$?
+    local output
+    local exit_code
+
+    output=$(cd \"$REPO_DIR\" && eval \"$command\" 2>/dev/null)
+    exit_code=$?
+
+    output=$(echo \"$output\" | head -n1)
+
     echo \"($id $exit_code \\\"$output\\\")\"
 }
 
@@ -149,19 +155,23 @@ echo \\)
 (defun magit-prime--refresh-cache-remote (commands)
   "Prime the refresh cache with the provided COMMANDS using tramp."
   (let ((vec (tramp-dissect-file-name default-directory))
-        (str-commands (magit-prime--format-commands-for-bash commands)))
+        (str-commands (magit-prime--format-commands-for-bash commands))
+        (repo-dir (file-remote-p default-directory 'localname))
+        (repo-path (magit-toplevel)))
     (tramp-maybe-send-script vec magit-prime--batch-commands-script
                              "magit_prime__batch_commands")
     (let ((results
            (tramp-send-command-and-read
-            vec (format "magit_prime__batch_commands '%s'" str-commands))))
+            vec (format "magit_prime__batch_commands '%s' '%s'" str-commands repo-dir))))
       (dolist (item results)
-        (let ((command (nth 0 item))
-              (status-code (nth 1 item))
-              (output (nth 2 item)))
-          ;; Use command, status-code, and output here
-          (message "Command: %S, Status: %d, Output: %S"
-                   command status-code output))))))
+        (let* ((command (nth 0 item))
+               (cachep (and (eq (car command) t) (pop command)))
+               (status-code (nth 1 item))
+               (output (nth 2 item)))
+          (message "Caching %s: %s (%s)" command output status-code)
+          (when (or cachep (zerop status-code))
+            (push (cons (cons repo-path command) (and (zerop status-code) output))
+                  (cdr magit--refresh-cache))))))))
 
 (defun magit-prime--format-commands-for-bash (commands)
   "Convert COMMANDS list to bash script input format.
