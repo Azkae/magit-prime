@@ -121,26 +121,62 @@
 
     (mapc #'kill-buffer buffers)))
 
-(defconst magit-prime--execute-commands-script "")
+(defconst magit-prime--batch-commands-script "
+COMMANDS=\"$1\"
+
+run_command() {
+    local id=\"$1\"
+    local command=\"$2\"
+
+    local output=$(eval \"$command\" 2>/dev/null | head -n1)
+    local exit_code=$?
+    echo \"($id $exit_code \\\"$output\\\")\"
+}
+
+echo \\(
+
+echo \"$COMMANDS\" | {
+    while IFS=':' read -r id command; do
+        run_command \"$id\" \"$command\" &
+    done
+
+    wait
+}
+
+echo \\)
+")
 
 (defun magit-prime--refresh-cache-remote (commands)
   "Prime the refresh cache with the provided COMMANDS using tramp."
-  )
+  (let ((vec (tramp-dissect-file-name default-directory))
+        (str-commands (magit-prime--format-commands-for-bash commands)))
+    (tramp-maybe-send-script vec magit-prime--batch-commands-script
+                             "magit_prime__batch_commands")
+    (let ((results
+           (tramp-send-command-and-read
+            vec (format "magit_prime__batch_commands '%s'" str-commands))))
+      (dolist (item results)
+        (let ((command (nth 0 item))
+              (status-code (nth 1 item))
+              (output (nth 2 item)))
+          ;; Use command, status-code, and output here
+          (message "Command: %S, Status: %d, Output: %S"
+                   command status-code output))))))
 
 (defun magit-prime--format-commands-for-bash (commands)
   "Convert COMMANDS list to bash script input format.
-Each command becomes 'ID:git ARGS' where ID is the 1-based index."
-  (let ((id 1))
-    (mapconcat
-     (lambda (command)
-       (let* ((cachep (and (eq (car command) t) (pop command)))
-              (clean-command (mapcar #'substring-no-properties command))
-              (git-command (mapconcat #'shell-quote-argument clean-command " "))
-              (line (format "%d:git %s" id git-command)))
-         (cl-incf id)
-         line))
-     commands
-     "\n")))
+Each command becomes 'LISP-FORM:git ARGS' where LISP-FORM is the original command."
+  (mapconcat
+   (lambda (command)
+     (let* ((original-command command)
+            (cachep (and (eq (car command) t) (pop command)))
+            (clean-command (mapcar #'substring-no-properties command))
+            (git-command (mapconcat #'shell-quote-argument clean-command " "))
+            (lisp-form (format "%S" original-command))
+            (line (format "%s:%s %s" lisp-form magit-remote-git-executable git-command)))
+       line))
+   commands
+   "\n"))
 
 (provide 'magit-prime)
 
