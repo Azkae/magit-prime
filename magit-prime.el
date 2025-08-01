@@ -26,6 +26,8 @@
     ("rev-parse" "--is-bare-repository")
     ("rev-parse" "--short" "HEAD")
     ("rev-parse" "--short" "HEAD~")
+    ("rev-parse" "--verify" "--abbrev-ref" "master@{upstream}")
+    ("rev-parse" "--verify" "--abbrev-ref" "main@{upstream}")
     (t "describe" "--contains" "HEAD")
     (t "rev-parse" "--verify" "HEAD")
     (t "rev-parse" "--verify" "refs/stash")
