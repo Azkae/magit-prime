@@ -205,8 +205,8 @@ When enabled, automatically primes caches before Magit refresh operations."
   :global t
   :group 'magit-prime
   (if magit-prime-mode
-      (add-hook 'magit-pre-refresh-hook 'magit-prime-refresh-cache)
-    (remove-hook 'magit-pre-refresh-hook 'magit-prime-refresh-cache)))
+      (add-hook 'magit-pre-refresh-hook #'magit-prime-refresh-cache)
+    (remove-hook 'magit-pre-refresh-hook #'magit-prime-refresh-cache)))
 
 (provide 'magit-prime)
 
