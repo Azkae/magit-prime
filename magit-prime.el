@@ -32,9 +32,17 @@
     (t "describe" "--contains" "HEAD")
     (t "rev-parse" "--verify" "HEAD")
     (t "rev-parse" "--verify" "refs/stash")
-    (t "rev-parse" "--verify" "HEAD~10")))
+    (t "rev-parse" "--verify" "HEAD~10"))
+  "Returns a list of git commands that will be used to prime magit's cache.
+
+Commands prefixed with t are cached even on failure.")
 
 (defun magit-prime--commands-phase-two ()
+  "Returns a list of git commands that will be used to prime magit's cache.
+The commands depend on the current branch, remotes,
+and upstream configurations fetched from `magit-prime--commands-phase-one''.
+
+Commands prefixed with t are cached even on failure."
   (let* ((branch (magit-get-current-branch))
          (main (magit-main-branch))
          (push-main (magit-get-push-branch main))
@@ -73,6 +81,7 @@
         (message "Refresh cached primed in %.3fs" elapsed)))))
 
 (defun magit-prime--refresh-cache (commands)
+  "Execute git COMMANDS to prime Magit's refresh cache."
   (if (file-remote-p default-directory)
       (magit-prime--refresh-cache-remote commands)
     (magit-prime--refresh-cache-local commands)))
