@@ -186,11 +186,12 @@ echo \\)
 
 (defun magit-prime--format-commands-for-bash (commands)
   "Convert COMMANDS list to bash script input format.
-Each command becomes 'LISP-FORM:git ARGS' where LISP-FORM is the original command."
+Each command becomes `LISP-FORM:git ARGS'
+where LISP-FORM is the original command."
   (mapconcat
    (lambda (command)
      (let* ((original-command command)
-            (cachep (and (eq (car command) t) (pop command)))
+            (_ (and (eq (car command) t) (pop command)))
             (clean-command (mapcar #'substring-no-properties command))
             (git-command (mapconcat #'shell-quote-argument clean-command " "))
             (line (format "%S:%s %s" original-command magit-remote-git-executable git-command)))
