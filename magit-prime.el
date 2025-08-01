@@ -38,7 +38,7 @@
 Commands prefixed with t are cached even on failure.")
 
 (defun magit-prime--commands-phase-two ()
-  "Returns a list of git commands that will be used to prime magit's cache.
+  "Return a list of git commands that will be used to prime magit's cache.
 The commands depend on the current branch, remotes,
 and upstream configurations fetched from `magit-prime--commands-phase-one''.
 
