@@ -1,6 +1,7 @@
 ;;; magit-prime.el --- Prime cache before Magit refresh -*- lexical-binding: t; -*-
 
 ;; Author: Romain Ouabdelkader <romain.ouabdelkader@gmail.com>
+;; URL: https://github.com/Azkae/magit-prime
 ;; Version: 0.1
 ;; Package-Requires: ((emacs "27.1") (magit "3.0.0"))
 
