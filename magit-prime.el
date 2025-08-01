@@ -18,6 +18,7 @@
 ;;; Code:
 
 (require 'magit)
+(require 'tramp-sh)
 
 (defvar magit-prime--commands-phase-one
   '(("symbolic-ref" "--short" "HEAD")
