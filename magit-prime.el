@@ -188,6 +188,16 @@ Each command becomes 'LISP-FORM:git ARGS' where LISP-FORM is the original comman
    commands
    "\n"))
 
+;;;###autoload
+(define-minor-mode magit-prime-mode
+  "Global minor mode to enable magit-prime cache priming.
+When enabled, automatically primes caches before Magit refresh operations."
+  :global t
+  :group 'magit-prime
+  (if magit-prime-mode
+      (add-hook 'magit-pre-refresh-hook 'magit-prime-refresh-cache)
+    (remove-hook 'magit-pre-refresh-hook 'magit-prime-refresh-cache)))
+
 (provide 'magit-prime)
 
 ;;; magit-prime.el ends here
