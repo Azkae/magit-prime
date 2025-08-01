@@ -181,8 +181,7 @@ Each command becomes 'LISP-FORM:git ARGS' where LISP-FORM is the original comman
             (cachep (and (eq (car command) t) (pop command)))
             (clean-command (mapcar #'substring-no-properties command))
             (git-command (mapconcat #'shell-quote-argument clean-command " "))
-            (lisp-form (format "%S" original-command))
-            (line (format "%s:%s %s" lisp-form magit-remote-git-executable git-command)))
+            (line (format "%S:%s %s" original-command magit-remote-git-executable git-command)))
        line))
    commands
    "\n"))
