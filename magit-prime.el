@@ -20,7 +20,7 @@
 (require 'magit)
 (require 'tramp-sh)
 
-(defvar magit-prime--commands-phase-one
+(defconst magit-prime--commands-phase-one
   '(("symbolic-ref" "--short" "HEAD")
     (t "describe" "--long" "--tags")
     ("describe" "--contains" "HEAD")
