@@ -7,10 +7,9 @@ Tramp support is experimental.
 
 ## Usage
 
+Magit prime is on MELPA:
 ```elisp
-;; Using straight.el
 (use-package magit-prime
-  :straight (:type git :host github :repo "Azkae/magit-prime")
   :config
   (add-hook 'magit-pre-refresh-hook 'magit-prime-refresh-cache))
 ```
