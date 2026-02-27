@@ -11,5 +11,5 @@ Magit prime is on MELPA:
 ```elisp
 (use-package magit-prime
   :config
-  (add-hook 'magit-pre-refresh-hook 'magit-prime-refresh-cache))
+  (magit-prime-mode))
 ```
