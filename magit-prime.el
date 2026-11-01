@@ -13,7 +13,12 @@
 ;; reducing Magit buffer refresh times.
 
 ;; Usage:
-;; (add-hook 'magit-pre-refresh-hook 'magit-prime-refresh-cache)
+;; (magit-prime-mode 1)
+;;
+;; Enabling `magit-prime-mode' adds `magit-prime-refresh-cache' to
+;; `magit-pre-refresh-hook' and advises `magit-git-exit-code',
+;; `magit-git-lines' and `magit-git-items' to consult the refresh
+;; cache, so no changes to Magit itself are needed.
 
 ;;; Code:
 
@@ -339,15 +344,63 @@ form, then the shell command to run."
      commands
      "\n")))
 
+(defun magit-prime--advice-git-exit-code (orig-fun &rest args)
+  "Around advice for `magit-git-exit-code' consulting the refresh cache.
+ORIG-FUN is the original function.  Flatten ARGS and look the exit
+code up under (default-directory magit-git-exit-code . ARGS)."
+  (setq args (flatten-tree args))
+  (magit--with-refresh-cache (cons default-directory (cons 'magit-git-exit-code args))
+    (apply orig-fun args)))
+
+(defun magit-prime--advice-git-lines (orig-fun &rest args)
+  "Around advice for `magit-git-lines' consulting the refresh cache.
+ORIG-FUN is the original function.  Flatten ARGS and look the output
+lines up under (default-directory magit-git-lines . ARGS)."
+  (setq args (flatten-tree args))
+  (magit--with-refresh-cache (cons default-directory (cons 'magit-git-lines args))
+    (apply orig-fun args)))
+
+(defun magit-prime--advice-git-items (orig-fun &rest args)
+  "Around advice for `magit-git-items' consulting the refresh cache.
+ORIG-FUN is the original function.  Flatten ARGS and look the output
+items up under (default-directory magit-git-items . ARGS)."
+  (setq args (flatten-tree args))
+  (magit--with-refresh-cache (cons default-directory (cons 'magit-git-items args))
+    (apply orig-fun args)))
+
+(defconst magit-prime--advised-functions
+  '((magit-git-exit-code . magit-prime--advice-git-exit-code)
+    (magit-git-lines . magit-prime--advice-git-lines)
+    (magit-git-items . magit-prime--advice-git-items))
+  "Alist of Magit functions advised while `magit-prime-mode' is on.
+These are the functions whose output magit-prime primes but that
+upstream Magit does not wrap in `magit--with-refresh-cache'.")
+
+(defun magit-prime--add-advices ()
+  "Add refresh-cache advices to `magit-prime--advised-functions'."
+  (dolist (advice magit-prime--advised-functions)
+    (advice-add (car advice) :around (cdr advice))))
+
+(defun magit-prime--remove-advices ()
+  "Remove the advices added by `magit-prime--add-advices'."
+  (dolist (advice magit-prime--advised-functions)
+    (advice-remove (car advice) (cdr advice))))
+
 ;;;###autoload
 (define-minor-mode magit-prime-mode
   "Global minor mode to enable magit-prime cache priming.
-When enabled, automatically primes caches before Magit refresh operations."
+When enabled, automatically primes caches before Magit refresh
+operations.  Also advises `magit-git-exit-code', `magit-git-lines'
+and `magit-git-items' so their results are served from the refresh
+cache; the advices are removed when the mode is disabled."
   :global t
   :group 'magit-prime
   (if magit-prime-mode
-      (add-hook 'magit-pre-refresh-hook #'magit-prime-refresh-cache)
-    (remove-hook 'magit-pre-refresh-hook #'magit-prime-refresh-cache)))
+      (progn
+        (add-hook 'magit-pre-refresh-hook #'magit-prime-refresh-cache)
+        (magit-prime--add-advices))
+    (remove-hook 'magit-pre-refresh-hook #'magit-prime-refresh-cache)
+    (magit-prime--remove-advices)))
 
 (provide 'magit-prime)
 

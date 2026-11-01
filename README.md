@@ -23,10 +23,8 @@ Besides the plain `git` invocations cached by `magit-git-str`/`magit-git-string`
 - `git for-each-ref ...`, `git remote` (cached by `magit-git-lines`)
 - `git status --porcelain ...`, `git config --local ...` (cached by `magit-git-items`)
 - `git update-index --refresh` and other exit-code checks (cached by `magit-git-exit-code`)
-- washed sections: `git diff` (staged/unstaged), `git log` (recent/unpushed/unpulled),
-  `git reflog refs/stash` (cached by `magit--git-wash`)
-- `git rev-parse --verify refs/tags/<tag>` for tags found in primed log output
 
-The last four require small patches to magit's `lisp/magit-git.el`
-(`magit-git-lines`, `magit-git-items`, `magit-git-exit-code` and
-`magit--git-wash` are wrapped in `magit--with-refresh-cache`).
+The last three are served from the refresh cache through advices that
+`magit-prime-mode` adds to `magit-git-lines`, `magit-git-items` and
+`magit-git-exit-code` (and removes again when the mode is turned off),
+so no changes to Magit itself are needed.
