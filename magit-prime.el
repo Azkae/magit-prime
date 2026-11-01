@@ -155,7 +155,7 @@ Commands prefixed with t are cached even on failure."
 
 (defun magit-prime-refresh-cache ()
   "Prime the refresh cache if possible."
-    (when magit-process-record-invocations
+  (when magit-process-record-invocations
     (let ((messages-buffer-name magit-process-record-buffer-name)
           (inhibit-message t))
       (message "magit-prime: starting refresh")))
