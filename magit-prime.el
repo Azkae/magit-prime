@@ -93,21 +93,21 @@ so a cached nil result is still a cache hit.")
 
 Entries prefixed with t are cached even on failure.")
 
-(defun magit-prime--for-each-ref-commands ()
-  "Return `lines' entries mirroring `magit-list-refs' git calls."
-  (let ((sortby (mapcar (lambda (s) (concat "--sort=" s))
-                        (ensure-list magit-list-refs-sortby))))
-    (mapcan
-     (lambda (ns)
-       (mapcar
-        (lambda (format)
-          `(lines "for-each-ref" ,(concat "--format=%(symref)\f" format)
-                  ,@(if (and (not sortby) (equal ns "refs/tags"))
-                        (list "--sort=-version:refname")
-                      sortby)
-                  ,ns))
-        '("%(refname:short)" "%(refname)")))
-     magit-list-refs-namespaces)))
+;; (defun magit-prime--for-each-ref-commands ()
+;;   "Return `lines' entries mirroring `magit-list-refs' git calls."
+;;   (let ((sortby (mapcar (lambda (s) (concat "--sort=" s))
+;;                         (ensure-list magit-list-refs-sortby))))
+;;     (mapcan
+;;      (lambda (ns)
+;;        (mapcar
+;;         (lambda (format)
+;;           `(lines "for-each-ref" ,(concat "--format=%(symref)\f" format)
+;;                   ,@(if (and (not sortby) (equal ns "refs/tags"))
+;;                         (list "--sort=-version:refname")
+;;                       sortby)
+;;                   ,ns))
+;;         '("%(refname:short)" "%(refname)")))
+;;      magit-list-refs-namespaces)))
 
 (defun magit-prime--commands-phase-two ()
   "Return git commands that depend on the current branch and remotes.
@@ -138,8 +138,8 @@ Commands prefixed with t are cached even on failure."
        (t "rev-parse" "--verify" ,(format "refs/tags/%s/HEAD" primary-remote))
        (t "rev-parse" "--verify" ,push-branch)
        ;; Remotes and branches, cached by `magit-git-lines'.
-       (lines "remote")
-       ,@(magit-prime--for-each-ref-commands)
+       ;; (lines "remote")
+       ;; ,@(magit-prime--for-each-ref-commands)
        ;; Untracked files, cached by `magit-git-items'.
        (t items "config" "--local" "-z" "--get-all" "--include"
           "status.showUntrackedFiles")
