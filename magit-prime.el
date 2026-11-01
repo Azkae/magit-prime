@@ -20,7 +20,7 @@
 (require 'magit)
 (require 'tramp-sh)
 
-(defconst magit-prime--kinds '(str lines items wash exit-code config)
+(defconst magit-prime--kinds '(str lines items exit-code config)
   "Kinds of refresh-cache entries primed by magit-prime.
 
 Each command entry has the form (CACHEP KIND . ARGS).  CACHEP is the
@@ -32,7 +32,6 @@ cached value:
              (as used by `magit-git-str', `magit-git-string', ...)
   lines      list of output lines;     key (TOPLEVEL magit-git-lines . ARGS)
   items      list of NUL-separated items; key (TOPLEVEL magit-git-items . ARGS)
-  wash       (EXIT . raw output);      key (TOPLEVEL magit--git-wash . ARGS)
   exit-code  exit code;                 key (TOPLEVEL magit-git-exit-code . ARGS)
   config     hash table of all config; key (TOPLEVEL . config)
 
@@ -82,50 +81,6 @@ Entries prefixed with t are cached even on failure.")
         '("%(refname:short)" "%(refname)")))
      magit-list-refs-namespaces)))
 
-(defun magit-prime--log-command (revs largs files)
-  "Build a `wash' entry mirroring `magit--insert-log' for REVS with LARGS."
-  (let* ((args largs)
-         (fmt (format magit-log-heading-format
-                      (if (and (member "--left-right" args)
-                               (not (member "--graph" args)))
-                          "%m " "")
-                      (if (member "--decorate" args) "%D" "")
-                      ""
-                      (if magit-log-margin-show-committer-date "%ct" "%at")
-                      ""
-                      ""))
-         (args (if (member "--decorate" args)
-                   (cons "--decorate=full" (remove "--decorate" args))
-                 args)))
-    `(wash "log" ,fmt ,@args "--use-mailmap" "--no-prefix" ,revs "--" ,@files)))
-
-(defun magit-prime--log-commands (largs lfiles push-branch upstream-branch)
-  "Return `wash' entries for the log sections of the status buffer."
-  (when (and largs
-             (not magit-log-trailer-labels)
-             (not (member "--show-signature" largs)))
-    (let ((recent-args (cons (format "-n%d" magit-log-section-commit-count)
-                             (seq-remove (##string-prefix-p "-n" %) largs))))
-      (delq nil
-            (list (magit-prime--log-command nil recent-args lfiles)
-                  (and push-branch
-                       (magit-prime--log-command (concat push-branch "..") largs lfiles))
-                  (and push-branch
-                       (magit-prime--log-command (concat ".." push-branch) largs lfiles))
-                  (magit-prime--log-command "@{upstream}.." largs lfiles)
-                  (magit-prime--log-command "..@{upstream}" largs lfiles)
-                  (and upstream-branch
-                       (magit-prime--log-command (concat upstream-branch "..") largs lfiles))
-                  (and upstream-branch
-                       (magit-prime--log-command (concat ".." upstream-branch) largs lfiles)))))))
-
-(defun magit-prime--diff-commands (dargs dfiles)
-  "Return `wash' entries for the staged/unstaged diff sections."
-  (unless (seq-some (##string-prefix-p "-C" %) (append dargs dfiles))
-    (list `(wash "diff" "--ita-visible-in-index" ,@dargs "--no-prefix" "--" ,@dfiles)
-          `(wash "diff" "--ita-visible-in-index" "--cached" ,@dargs
-                 "--no-prefix" "--" ,@dfiles))))
-
 (defun magit-prime--commands-phase-two ()
   "Return git commands that depend on the current branch and remotes.
 
@@ -137,18 +92,7 @@ Commands prefixed with t are cached even on failure."
          (upstream-main (magit-get-upstream-branch main))
          (upstream-branch (magit-get-upstream-branch branch))
          (push-remote (magit-get-push-remote branch))
-         (primary-remote (magit-primary-remote))
-         (status-buffer (magit-get-mode-buffer 'magit-status-mode))
-         (dargs (or (and status-buffer
-                         (buffer-local-value 'magit-buffer-diff-args status-buffer))
-                    (get 'magit-status-mode 'magit-diff-default-arguments)))
-         (dfiles (and status-buffer
-                      (buffer-local-value 'magit-buffer-diff-files status-buffer)))
-         (largs (or (and status-buffer
-                         (buffer-local-value 'magit-buffer-log-args status-buffer))
-                    (get 'magit-status-mode 'magit-log-default-arguments)))
-         (lfiles (and status-buffer
-                      (buffer-local-value 'magit-buffer-log-files status-buffer))))
+         (primary-remote (magit-primary-remote)))
     (cl-remove-duplicates
      `(("rev-parse" "--verify" "--abbrev-ref" ,(concat main "@{upstream}"))
        ("rev-parse" "--verify" "--abbrev-ref" ,(concat branch "@{upstream}"))
@@ -178,35 +122,8 @@ Commands prefixed with t are cached even on failure."
        (t exit-code "rev-parse" "@{upstream}")
        ,@(and upstream-branch
               (list `(t exit-code "merge-base" "--is-ancestor" "HEAD"
-                             ,upstream-branch)))
-       ;; Washed sections (diffs, logs, stashes), cached by `magit--git-wash'.
-       (wash "reflog" "--format=%gd%x00%aN%x00%at%x00%gs" "refs/stash")
-       ,@(magit-prime--diff-commands dargs dfiles)
-       ,@(magit-prime--log-commands largs lfiles push-branch upstream-branch))
+                             ,upstream-branch))))
      :test #'equal)))
-
-(defun magit-prime--commands-phase-three ()
-  "Return git commands derived from already primed log output.
-
-Log decorations (\"tag: NAME\") cause `magit-format-ref-labels' to run
-\"git rev-parse --verify refs/tags/NAME\"; prime those too."
-  (let (tags)
-    (dolist (entry (cdr magit--refresh-cache))
-      (pcase-let ((`(,key . (,exit . ,output)) entry))
-        (when (and (consp key)
-                   (consp (cdr key))
-                   (eq (cadr key) 'magit--git-wash)
-                   (equal (caddr key) "log")
-                   (eq exit 0)
-                   (stringp output))
-          (with-temp-buffer
-            (insert output)
-            (goto-char (point-min))
-            (while (re-search-forward "\\(?:^\\|, \\)tag: \\([^,]+\\)" nil t)
-              (push (match-string-no-properties 1) tags))))))
-    (mapcar (lambda (tag)
-              (list t "rev-parse" "--verify" (concat "refs/tags/" tag)))
-            (delete-dups tags))))
 
 (defun magit-prime-refresh-cache ()
   "Prime the refresh cache if possible."
@@ -215,14 +132,13 @@ Log decorations (\"tag: NAME\") cause `magit-format-ref-labels' to run
              magit--refresh-cache
              (magit-toplevel))
     ;; Bind `default-directory' to the toplevel so that the cache keys
-    ;; computed while gathering phase-two/three commands match the keys
+    ;; computed while gathering phase-two commands match the keys
     ;; used when the status buffer is refreshed.
     (let ((default-directory (magit-toplevel))
           (elapsed
            (benchmark-elapse
              (magit-prime--refresh-cache magit-prime--commands-phase-one)
-             (magit-prime--refresh-cache (magit-prime--commands-phase-two))
-             (magit-prime--refresh-cache (magit-prime--commands-phase-three)))))
+             (magit-prime--refresh-cache (magit-prime--commands-phase-two)))))
       (when magit-refresh-verbose
         (message "Refresh cached primed in %.3fs" elapsed)))))
 
@@ -244,8 +160,7 @@ keys computed by magit, which flattens arguments the same way."
     ('str (cons repo args))
     ('lines (cons repo (cons 'magit-git-lines args)))
     ('items (cons repo (cons 'magit-git-items args)))
-    ('exit-code (cons repo (cons 'magit-git-exit-code args)))
-    ('wash (cons repo (cons 'magit--git-wash args)))))
+    ('exit-code (cons repo (cons 'magit-git-exit-code args)))))
 
 (defun magit-prime--config-hash-table (output)
   "Build the hash table cached under the `config' key from OUTPUT.
@@ -270,7 +185,6 @@ not be cached."
   (setq output (or output ""))
   (if (zerop exit-status)
       (pcase kind
-        ('wash (cons exit-status output))
         ('exit-code exit-status)
         ('config (magit-prime--config-hash-table output))
         ('lines (split-string output "\n" t))
@@ -279,7 +193,7 @@ not be cached."
                    (substring output 0 (or (cl-position ?\n output)
                                            (length output))))))
     ;; On failure, only cache (as nil, or as the exit code) when the
-    ;; entry is marked with t; never cache failed wash/config output.
+    ;; entry is marked with t; never cache failed config output.
     (when (and cachep (memq kind '(str lines items exit-code)))
       (if (eq kind 'exit-code) exit-status nil))))
 
