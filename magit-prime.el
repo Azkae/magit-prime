@@ -18,7 +18,11 @@
 ;; Enabling `magit-prime-mode' adds `magit-prime-refresh-cache' to
 ;; `magit-pre-refresh-hook' and advises `magit-git-exit-code',
 ;; `magit-git-lines' and `magit-git-items' to consult the refresh
-;; cache, so no changes to Magit itself are needed.
+;; cache, so no changes to Magit itself are needed.  It also advises
+;; `magit-rev-parse-safe' to cache "--show-toplevel" and
+;; "--show-cdup" results for a few seconds per directory, which
+;; avoids repeated git processes from `magit-toplevel' and friends
+;; outside of refreshes.
 
 ;;; Code:
 
@@ -48,6 +52,25 @@ Processes that finish later still prime the cache while the refresh
 is running."
   :type 'number
   :group 'magit-prime)
+
+(defcustom magit-prime-rev-parse-cache-duration 5
+  "Seconds to cache `magit-rev-parse-safe' directory lookups.
+Calls to `magit-rev-parse-safe' with \"--show-toplevel\" or
+\"--show-cdup\" are cached for this many seconds, keyed by
+`default-directory', so that repeated calls outside of a refresh
+(for example from `magit-toplevel') do not spawn a git process
+each time.  nil disables the cache."
+  :type '(choice (const :tag "Disabled" nil) number)
+  :group 'magit-prime)
+
+(defconst magit-prime--rev-parse-cached-args
+  '(("--show-toplevel") ("--show-cdup"))
+  "Argument lists of `magit-rev-parse-safe' that are cached.")
+
+(defvar magit-prime--rev-parse-cache (make-hash-table :test #'equal)
+  "Time-limited cache for `magit-rev-parse-safe' directory lookups.
+Keys are (DEFAULT-DIRECTORY . ARGS) and values are (TIMESTAMP . VALUE),
+so a cached nil result is still a cache hit.")
 
 (defconst magit-prime--commands-phase-one
   `(("symbolic-ref" "--short" "HEAD")
@@ -132,6 +155,10 @@ Commands prefixed with t are cached even on failure."
 
 (defun magit-prime-refresh-cache ()
   "Prime the refresh cache if possible."
+    (when magit-process-record-invocations
+    (let ((messages-buffer-name magit-process-record-buffer-name)
+          (inhibit-message t))
+      (message "magit-prime: starting refresh")))
   (when (and (or magit-refresh-status-buffer
                  (derived-mode-p 'magit-status-mode))
              magit--refresh-cache
@@ -145,7 +172,11 @@ Commands prefixed with t are cached even on failure."
              (magit-prime--refresh-cache magit-prime--commands-phase-one)
              (magit-prime--refresh-cache (magit-prime--commands-phase-two)))))
       (when magit-refresh-verbose
-        (message "Refresh cached primed in %.3fs" elapsed)))))
+        (message "Refresh cached primed in %.3fs" elapsed))
+      (when magit-process-record-invocations
+        (let ((messages-buffer-name magit-process-record-buffer-name)
+              (inhibit-message t))
+          (message "magit-prime: finished in %.3fs" elapsed))))))
 
 (defun magit-prime--parse-command (command)
   "Parse a COMMAND entry into (CACHEP KIND ARGS).
@@ -368,13 +399,52 @@ items up under (default-directory magit-git-items . ARGS)."
   (magit--with-refresh-cache (cons default-directory (cons 'magit-git-items args))
     (apply orig-fun args)))
 
+(defun magit-prime--rev-parse-cache-prune (now)
+  "Remove expired entries from `magit-prime--rev-parse-cache'.
+NOW is the current time, as returned by `float-time'."
+  (when magit-prime-rev-parse-cache-duration
+    (maphash (lambda (key entry)
+               (when (> (- now (car entry)) magit-prime-rev-parse-cache-duration)
+                 (remhash key magit-prime--rev-parse-cache)))
+             magit-prime--rev-parse-cache)))
+
+(defun magit-prime--advice-rev-parse-safe (orig-fun &rest args)
+  "Around advice for `magit-rev-parse-safe' caching directory lookups.
+ORIG-FUN is the original function.  Calls with \"--show-toplevel\" or
+\"--show-cdup\" are served from `magit-prime--rev-parse-cache' when a
+fresh entry exists for the current `default-directory'; otherwise
+ORIG-FUN is called and its result (even nil) is cached for
+`magit-prime-rev-parse-cache-duration' seconds."
+  (let ((args (flatten-tree args)))
+    (if (or (null magit-prime-rev-parse-cache-duration)
+            (not (member args magit-prime--rev-parse-cached-args)))
+        (apply orig-fun args)
+      (let* ((key (cons (or default-directory "") args))
+             (entry (gethash key magit-prime--rev-parse-cache))
+             (now (float-time)))
+        (if (and entry
+                 (<= (- now (car entry)) magit-prime-rev-parse-cache-duration))
+            (cdr entry)
+          ;; Prune expired entries once the cache grows large, so it
+          ;; does not grow unboundedly over a long session.
+          (when (> (hash-table-size magit-prime--rev-parse-cache) 256)
+            (magit-prime--rev-parse-cache-prune now))
+          (let ((value (apply orig-fun args)))
+            (puthash key (cons now value) magit-prime--rev-parse-cache)
+            value))))))
+
 (defconst magit-prime--advised-functions
   '((magit-git-exit-code . magit-prime--advice-git-exit-code)
     (magit-git-lines . magit-prime--advice-git-lines)
-    (magit-git-items . magit-prime--advice-git-items))
+    (magit-git-items . magit-prime--advice-git-items)
+    (magit-rev-parse-safe . magit-prime--advice-rev-parse-safe))
   "Alist of Magit functions advised while `magit-prime-mode' is on.
-These are the functions whose output magit-prime primes but that
-upstream Magit does not wrap in `magit--with-refresh-cache'.")
+The first three are the functions whose output magit-prime primes but
+that upstream Magit does not wrap in `magit--with-refresh-cache'.
+`magit-rev-parse-safe' is advised to serve \"--show-toplevel\" and
+\"--show-cdup\" lookups from the time-limited
+`magit-prime--rev-parse-cache', which matters outside of refreshes
+where the refresh cache is inactive.")
 
 (defun magit-prime--add-advices ()
   "Add refresh-cache advices to `magit-prime--advised-functions'."
@@ -384,7 +454,8 @@ upstream Magit does not wrap in `magit--with-refresh-cache'.")
 (defun magit-prime--remove-advices ()
   "Remove the advices added by `magit-prime--add-advices'."
   (dolist (advice magit-prime--advised-functions)
-    (advice-remove (car advice) (cdr advice))))
+    (advice-remove (car advice) (cdr advice)))
+  (clrhash magit-prime--rev-parse-cache))
 
 ;;;###autoload
 (define-minor-mode magit-prime-mode
@@ -392,7 +463,10 @@ upstream Magit does not wrap in `magit--with-refresh-cache'.")
 When enabled, automatically primes caches before Magit refresh
 operations.  Also advises `magit-git-exit-code', `magit-git-lines'
 and `magit-git-items' so their results are served from the refresh
-cache; the advices are removed when the mode is disabled."
+cache, and advises `magit-rev-parse-safe' so \"--show-toplevel\" and
+\"--show-cdup\" lookups are served from a short-lived cache keyed by
+`default-directory'; the advices are removed when the mode is
+disabled."
   :global t
   :group 'magit-prime
   (if magit-prime-mode

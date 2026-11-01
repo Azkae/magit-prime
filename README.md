@@ -28,3 +28,12 @@ The last three are served from the refresh cache through advices that
 `magit-prime-mode` adds to `magit-git-lines`, `magit-git-items` and
 `magit-git-exit-code` (and removes again when the mode is turned off),
 so no changes to Magit itself are needed.
+
+## Outside of refresh
+
+Magit's refresh cache is inactive outside of refreshes, so functions
+like `magit-toplevel` spawn several `git rev-parse --show-toplevel` /
+`--show-cdup` processes on every call. `magit-prime-mode` also advises
+`magit-rev-parse-safe` to cache those two lookups for
+`magit-prime-rev-parse-cache-duration` seconds (default 5), keyed by
+`default-directory`.
