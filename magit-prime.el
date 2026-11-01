@@ -279,8 +279,12 @@ run_command() {
 
 echo \\(
 
+# COMMANDS holds alternating lines: a Lisp form identifying the command,
+# then the shell command to run.  Reading line pairs avoids any field
+# separator clashing with characters inside the Lisp form or the command.
 echo \"$COMMANDS\" | {
-    while IFS=':' read -r id command; do
+    while IFS= read -r id; do
+        IFS= read -r command
         run_command \"$id\" \"$command\" &
     done
 
@@ -301,32 +305,39 @@ echo \\)
                              "magit_prime__batch_commands")
     (let ((results
            (tramp-send-command-and-read
-            vec (format "magit_prime__batch_commands '%s' '%s'" str-commands repo-dir))))
+            vec (format "magit_prime__batch_commands %s %s"
+                         (magit-prime--sh-single-quote str-commands)
+                         (magit-prime--sh-single-quote repo-dir)))))
       (dolist (item results)
-        (pcase-let ((`(,command ,status-code ,b64) item)
-                    (`(,cachep ,kind ,args) (magit-prime--parse-command command)))
-          (let* ((output (and (stringp b64)
-                              (not (zerop (length b64)))
-                              (decode-coding-string
-                               (base64-decode-string b64) coding)))
-                 (value (magit-prime--entry-value kind cachep status-code output)))
-            (unless (eq value magit-prime--skip)
-              (push (cons (magit-prime--entry-key repo-path kind args) value)
-                    (cdr magit--refresh-cache)))))))))
+        (pcase-let ((`(,command ,status-code ,b64) item))
+          (pcase-let ((`(,cachep ,kind ,args) (magit-prime--parse-command command)))
+            (let* ((output (and (stringp b64)
+                                (not (zerop (length b64)))
+                                (decode-coding-string
+                                 (base64-decode-string b64) coding)))
+                   (value (magit-prime--entry-value kind cachep status-code output)))
+              (unless (eq value magit-prime--skip)
+                (push (cons (magit-prime--entry-key repo-path kind args) value)
+                      (cdr magit--refresh-cache))))))))))
+
+(defun magit-prime--sh-single-quote (string)
+  "Single-quote STRING for a POSIX shell command line."
+  (concat "'" (replace-regexp-in-string "'" "'\\\\''" string) "'"))
 
 (defun magit-prime--format-commands-for-bash (commands)
   "Convert COMMANDS list to bash script input format.
-Each command becomes `LISP-FORM:git ARGS'
-where LISP-FORM is the original command."
-  (mapconcat
-   (lambda (command)
-     (pcase-let ((`(,_cachep ,_kind ,args) (magit-prime--parse-command command)))
-       (let* ((clean-command (mapcar #'substring-no-properties args))
-              (git-command (mapconcat #'shell-quote-argument clean-command " "))
-              (line (format "%S:%s %s" command magit-remote-git-executable git-command)))
-         line)))
-   commands
-   "\n"))
+Each command becomes two lines: the original command as a Lisp
+form, then the shell command to run."
+  (let ((print-escape-newlines t))
+    (mapconcat
+     (lambda (command)
+       (pcase-let ((`(,_cachep ,_kind ,args) (magit-prime--parse-command command)))
+         (let* ((clean-command (mapcar #'substring-no-properties args))
+                (git-command (mapconcat #'shell-quote-argument clean-command " ")))
+           (concat (format "%S" command) "\n"
+                   magit-remote-git-executable " " git-command))))
+     commands
+     "\n")))
 
 ;;;###autoload
 (define-minor-mode magit-prime-mode
