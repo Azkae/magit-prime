@@ -189,15 +189,21 @@ Mirrors `magit-config-get-from-cached-list'."
         (puthash key (nconc (gethash key configs) (list val)) configs)))
     configs))
 
-(defconst magit-prime--skip (gensym "magit-prime-skip")
-  "Marker returned by `magit-prime--entry-value' when nothing should
-be cached.")
+(defun magit-prime--cacheable-p (cachep kind exit-status)
+  "Return non-nil when a priming result should be cached.
+CACHEP and KIND come from the command entry, EXIT-STATUS from the
+git process.  Successful commands are always cached; failed ones
+only when the entry is marked with t, and never failed `config'
+output."
+  (or (zerop exit-status)
+      (and cachep (memq kind '(str lines items exit-code)))))
 
-(defun magit-prime--entry-value (kind cachep exit-status output)
+(defun magit-prime--entry-value (kind exit-status output)
   "Compute the cache value for a finished priming process.
-KIND and CACHEP come from the command entry, EXIT-STATUS and OUTPUT
-from the git process.  Return `magit-prime--skip' when the entry must
-not be cached."
+KIND comes from the command entry, EXIT-STATUS and OUTPUT from the
+git process.  On failure the value is nil, or the exit code for
+`exit-code' entries; whether it is cached is decided by
+`magit-prime--cacheable-p'."
   (setq output (or output ""))
   (if (zerop exit-status)
       (pcase kind
@@ -208,10 +214,7 @@ not be cached."
         ('str (and (not (zerop (length output)))
                    (substring output 0 (or (cl-position ?\n output)
                                            (length output))))))
-    ;; On failure, only cache (as nil, or as the exit code) when the
-    ;; entry is marked with t; never cache failed config output.
-    (when (and cachep (memq kind '(str lines items exit-code)))
-      (if (eq kind 'exit-code) exit-status nil))))
+    (if (eq kind 'exit-code) exit-status nil)))
 
 (defun magit-prime--refresh-cache (commands)
   "Execute git COMMANDS to prime Magit's refresh cache."
@@ -245,15 +248,14 @@ not be cached."
                     (when (eq (process-status proc) 'exit)
                       (let ((buf (process-buffer proc)))
                         (when (buffer-live-p buf)
-                          (let ((value
-                                 (with-current-buffer buf
-                                   (magit-prime--entry-value
-                                    kind cachep (process-exit-status proc)
-                                    (buffer-substring-no-properties
-                                     (point-min) (point-max))))))
-                            (unless (eq value magit-prime--skip)
+                          (let ((exit-status (process-exit-status proc)))
+                            (when (magit-prime--cacheable-p cachep kind exit-status)
                               (push (cons (magit-prime--entry-key repo-path kind args)
-                                          value)
+                                          (with-current-buffer buf
+                                            (magit-prime--entry-value
+                                             kind exit-status
+                                             (buffer-substring-no-properties
+                                              (point-min) (point-max)))))
                                     (cdr magit--refresh-cache))))
                           (kill-buffer buf)))
                       (when (buffer-live-p stderr)
@@ -327,13 +329,13 @@ echo \\)
       (dolist (item results)
         (pcase-let ((`(,command ,status-code ,b64) item))
           (pcase-let ((`(,cachep ,kind ,args) (magit-prime--parse-command command)))
-            (let* ((output (and (stringp b64)
-                                (not (zerop (length b64)))
-                                (decode-coding-string
-                                 (base64-decode-string b64) coding)))
-                   (value (magit-prime--entry-value kind cachep status-code output)))
-              (unless (eq value magit-prime--skip)
-                (push (cons (magit-prime--entry-key repo-path kind args) value)
+            (let ((output (and (stringp b64)
+                               (not (zerop (length b64)))
+                               (decode-coding-string
+                                (base64-decode-string b64) coding))))
+              (when (magit-prime--cacheable-p cachep kind status-code)
+                (push (cons (magit-prime--entry-key repo-path kind args)
+                            (magit-prime--entry-value kind status-code output))
                       (cdr magit--refresh-cache))))))))))
 
 (defun magit-prime--sh-single-quote (string)
