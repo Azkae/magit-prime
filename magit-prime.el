@@ -18,8 +18,7 @@
 ;; Enabling `magit-prime-mode' adds `magit-prime-refresh-cache' to
 ;; `magit-pre-refresh-hook' and advises `magit-git-exit-code',
 ;; `magit-git-lines' and `magit-git-items' to consult the refresh
-;; cache, so no changes to Magit itself are needed.  It also advises
-;; `magit-rev-parse-safe' to cache "--show-toplevel" and
+;; cache.  It also advises `magit-rev-parse-safe' to cache "--show-toplevel" and
 ;; "--show-cdup" results for a few seconds per directory, which
 ;; avoids repeated git processes from `magit-toplevel' and friends
 ;; outside of refreshes.
@@ -94,22 +93,6 @@ so a cached nil result is still a cache hit.")
 
 Entries prefixed with t are cached even on failure.")
 
-;; (defun magit-prime--for-each-ref-commands ()
-;;   "Return `lines' entries mirroring `magit-list-refs' git calls."
-;;   (let ((sortby (mapcar (lambda (s) (concat "--sort=" s))
-;;                         (ensure-list magit-list-refs-sortby))))
-;;     (mapcan
-;;      (lambda (ns)
-;;        (mapcar
-;;         (lambda (format)
-;;           `(lines "for-each-ref" ,(concat "--format=%(symref)\f" format)
-;;                   ,@(if (and (not sortby) (equal ns "refs/tags"))
-;;                         (list "--sort=-version:refname")
-;;                       sortby)
-;;                   ,ns))
-;;         '("%(refname:short)" "%(refname)")))
-;;      magit-list-refs-namespaces)))
-
 (defun magit-prime--commands-phase-two ()
   "Return git commands that depend on the current branch and remotes.
 
@@ -138,10 +121,6 @@ Commands prefixed with t are cached even on failure."
        (t "rev-parse" "--verify" ,(concat "refs/tags/" push-main))
        (t "rev-parse" "--verify" ,(format "refs/tags/%s/HEAD" primary-remote))
        (t "rev-parse" "--verify" ,push-branch)
-       ;; Remotes and branches, cached by `magit-git-lines'.
-       ;; (lines "remote")
-       ;; ,@(magit-prime--for-each-ref-commands)
-       ;; Untracked files, cached by `magit-git-items'.
        (t items "config" "--local" "-z" "--get-all" "--include"
           "status.showUntrackedFiles")
        (items "status" "-z" "--porcelain" "--untracked-files=normal" "--")
