@@ -47,8 +47,8 @@ If KIND is omitted, it defaults to `str'.")
 
 (defcustom magit-prime-timeout 1
   "Maximum number of seconds to wait for priming git processes.
-Processes that finish later still prime the cache while the refresh
-is running."
+Processes still running after this many seconds are killed, and their
+results are not cached."
   :type 'number
   :group 'magit-prime)
 
@@ -224,58 +224,62 @@ git process.  On failure the value is nil, or the exit code for
 
 (defun magit-prime--refresh-cache-local (commands)
   "Prime the refresh cache with the provided COMMANDS."
-  (let* ((repo-path (magit-toplevel))
-         (running 0)
-         (buffers
-          (mapcar
-           (lambda (command)
-             (pcase-let ((`(,cachep ,kind ,args)
-                          (magit-prime--parse-command command)))
-               (let* ((buffer (generate-new-buffer " *magit-prime-refresh-cache*"))
-                      (stderr (generate-new-buffer " *magit-prime-refresh-cache-stderr*"))
-                      (process-environment (magit-process-environment))
-                      (default-process-coding-system (magit--process-coding-system)))
-                 (make-process
-                  :name (buffer-name buffer)
-                  :buffer buffer
-                  :stderr stderr
-                  :noquery t
-                  :connection-type 'pipe
-                  :command (cons magit-git-executable
-                                 (magit-process-git-arguments args))
-                  :sentinel
-                  (lambda (proc _event)
-                    (when (eq (process-status proc) 'exit)
-                      (let ((buf (process-buffer proc)))
-                        (when (buffer-live-p buf)
+  (let ((repo-path (magit-toplevel))
+        (running 0)
+        (processes nil))
+    (unwind-protect
+        (progn
+          (dolist (command commands)
+            (pcase-let ((`(,cachep ,kind ,args)
+                         (magit-prime--parse-command command)))
+              (let* ((buffer (generate-new-buffer " *magit-prime-refresh-cache*"))
+                     (stderr (generate-new-buffer " *magit-prime-refresh-cache-stderr*"))
+                     (process-environment (magit-process-environment))
+                     (default-process-coding-system (magit--process-coding-system)))
+                (condition-case err
+                    (push
+                     (make-process
+                      :name (buffer-name buffer)
+                      :buffer buffer
+                      :stderr stderr
+                      :noquery t
+                      :connection-type 'pipe
+                      :command (cons magit-git-executable
+                                     (magit-process-git-arguments args))
+                      :sentinel
+                      (lambda (proc _event)
+                        ;; Processes that were killed by a signal must be
+                        ;; cleaned up too, otherwise their buffers are leaked.
+                        (unless (process-live-p proc)
                           (let ((exit-status (process-exit-status proc)))
-                            (when (magit-prime--cacheable-p cachep kind exit-status)
+                            (when (and (eq (process-status proc) 'exit)
+                                       (buffer-live-p buffer)
+                                       (magit-prime--cacheable-p cachep kind exit-status))
                               (push (cons (magit-prime--entry-key repo-path kind args)
-                                          (with-current-buffer buf
+                                          (with-current-buffer buffer
                                             (magit-prime--entry-value
                                              kind exit-status
                                              (buffer-substring-no-properties
                                               (point-min) (point-max)))))
                                     (cdr magit--refresh-cache))))
-                          (kill-buffer buf)))
-                      (when (buffer-live-p stderr)
-                        (kill-buffer stderr))
-                      (cl-decf running))))
-                 (cl-incf running)
-                 buffer)))
-           commands)))
-
-    (with-timeout (magit-prime-timeout)
-      (while (> running 0)
-        (sit-for 0.01)
-        (accept-process-output)))
-
-    ;; Buffers whose processes are still running are left alone; their
-    ;; sentinels may still prime the cache while the refresh is running.
-    (dolist (buffer buffers)
-      (when (and (buffer-live-p buffer)
-                 (not (get-buffer-process buffer)))
-        (kill-buffer buffer)))))
+                          (kill-buffer buffer)
+                          (kill-buffer stderr)
+                          (cl-decf running))))
+                     processes)
+                  (error
+                   (kill-buffer buffer)
+                   (kill-buffer stderr)
+                   (signal (car err) (cdr err))))
+                (cl-incf running))))
+          (with-timeout (magit-prime-timeout)
+            (while (> running 0)
+              (sit-for 0.01)
+              (accept-process-output))))
+      ;; Kill processes still running after the timeout (or a quit or
+      ;; error); their sentinels run synchronously and kill their buffers.
+      (dolist (proc processes)
+        (when (process-live-p proc)
+          (delete-process proc))))))
 
 (defconst magit-prime--batch-commands-script "
 COMMANDS=\"$1\"
